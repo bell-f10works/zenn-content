@@ -7,52 +7,59 @@ on:
     paths:
       - 'articles/**.md'
 
+permissions:
+  contents: read
+
 jobs:
   notify:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 2  # 直前のコミットと比較するために2つ取得
+          persist-credentials: false
 
       - name: Detect published articles
         id: detect
         run: |
-          # 変更されたarticles/*.mdファイルを取得
-          CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'articles/*.md')
-          echo "Changed files: $CHANGED"
-
           TITLE=""
           SLUG=""
 
-          for FILE in $CHANGED; do
-            if [ ! -f "$FILE" ]; then
-              continue
-            fi
+          # 初回コミット直後など親コミットが存在しない場合は何もしない
+          if git rev-parse --verify -q HEAD~1 >/dev/null; then
+            # 変更されたarticles/*.mdファイルを取得
+            CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'articles/*.md')
+            echo "Changed files: $CHANGED"
 
-            # published: true が含まれているか確認
-            if grep -q "^published: true" "$FILE"; then
-              # 直前のコミットで published: false だったか、または新規ファイルかを確認
-              IS_NEW=$(git show HEAD~1:"$FILE" 2>/dev/null | grep -c "^published: true" || echo "0")
-
-              if [ "$IS_NEW" = "0" ]; then
-                # 今回初めて published: true になったファイル
-                TITLE=$(grep "^title:" "$FILE" | sed 's/^title: *"//' | sed 's/"$//' | sed "s/^title: *'//;s/'$//")
-                SLUG=$(basename "$FILE" .md)
-                echo "Newly published: $FILE (title: $TITLE, slug: $SLUG)"
-                break
+            for FILE in $CHANGED; do
+              if [ ! -f "$FILE" ]; then
+                continue
               fi
-            fi
-          done
 
-          echo "title=$TITLE" >> $GITHUB_OUTPUT
-          echo "slug=$SLUG" >> $GITHUB_OUTPUT
+              # published: true が含まれているか確認
+              if grep -q "^published: true" "$FILE"; then
+                # 直前のコミット時点では published: true でなかった
+                # (published: false または新規ファイル) ことを確認
+                if ! git show HEAD~1:"$FILE" 2>/dev/null | grep -q "^published: true"; then
+                  # 今回初めて published: true になったファイル
+                  TITLE=$(grep -m1 "^title:" "$FILE" | sed 's/^title: *"//' | sed 's/"$//' | sed "s/^title: *'//;s/'$//")
+                  SLUG=$(basename "$FILE" .md)
+                  echo "Newly published: $FILE (title: $TITLE, slug: $SLUG)"
+                  break
+                fi
+              fi
+            done
+          fi
+
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
 
       - name: Post to Bluesky
         if: steps.detect.outputs.slug != ''
-        uses: myConsciousness/bluesky-post@v5
+        uses: myConsciousness/bluesky-post@96827d0a9604cb228b11b3095f6961196efba4a0 # v5
         with:
           text: |
             📝 新しい記事を公開しました！
