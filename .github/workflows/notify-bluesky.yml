@@ -1,0 +1,67 @@
+name: Notify Bluesky on Article Published
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'articles/**.md'
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # 直前のコミットと比較するために2つ取得
+
+      - name: Detect published articles
+        id: detect
+        run: |
+          # 変更されたarticles/*.mdファイルを取得
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'articles/*.md')
+          echo "Changed files: $CHANGED"
+
+          TITLE=""
+          SLUG=""
+
+          for FILE in $CHANGED; do
+            if [ ! -f "$FILE" ]; then
+              continue
+            fi
+
+            # published: true が含まれているか確認
+            if grep -q "^published: true" "$FILE"; then
+              # 直前のコミットで published: false だったか、または新規ファイルかを確認
+              IS_NEW=$(git show HEAD~1:"$FILE" 2>/dev/null | grep -c "^published: true" || echo "0")
+
+              if [ "$IS_NEW" = "0" ]; then
+                # 今回初めて published: true になったファイル
+                TITLE=$(grep "^title:" "$FILE" | sed 's/^title: *"//' | sed 's/"$//' | sed "s/^title: *'//;s/'$//")
+                SLUG=$(basename "$FILE" .md)
+                echo "Newly published: $FILE (title: $TITLE, slug: $SLUG)"
+                break
+              fi
+            fi
+          done
+
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "slug=$SLUG" >> $GITHUB_OUTPUT
+
+      - name: Post to Bluesky
+        if: steps.detect.outputs.slug != ''
+        uses: myConsciousness/bluesky-post@v5
+        with:
+          text: |
+            📝 新しい記事を公開しました！
+
+            ${{ steps.detect.outputs.title }}
+
+            https://zenn.dev/bellf10works/articles/${{ steps.detect.outputs.slug }}
+
+            #組込み #AI #RaspberryPi
+          langs: "ja"
+          identifier: ${{ secrets.BLUESKY_IDENTIFIER }}
+          password: ${{ secrets.BLUESKY_PASSWORD }}
